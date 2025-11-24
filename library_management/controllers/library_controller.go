@@ -32,7 +32,9 @@ func (c *CLIController) Start() {
 		fmt.Println("4. Return Book")
 		fmt.Println("5. List Available Books")
 		fmt.Println("6. List Borrowed Books")
-		fmt.Println("7. Exit")
+		fmt.Println("7. Reserve Book")
+		fmt.Println("8. Simulate Concurretn Reservations")
+		fmt.Println("9. Exit")
 		fmt.Print("Select an option: ")
 
 		reader.Scan()
@@ -52,6 +54,10 @@ func (c *CLIController) Start() {
 		case "6":
 			c.handleListBorrowed(reader)
 		case "7":
+			c.handleReserveBook(reader)
+		case "8":
+			c.handleSimulateConcurrentReservations(reader)
+		case "9":
 			fmt.Println("Exiting...")
 			return
 		default:
@@ -148,6 +154,43 @@ func (c *CLIController) handleListBorrowed(reader *bufio.Scanner) {
 		fmt.Printf("ID: %d | %s by %s\n", b.ID, b.Title, b.Author)
 	}
 }
+
+
+func (c *CLIController) handleReserveBook(reader *bufio.Scanner) {
+	fmt.Print("Enter Book ID: ")
+	bookID := readInt(reader)
+
+	fmt.Print("Enter Member ID: ")
+	memberID := readInt(reader)
+
+	err := c.lib.ReserveBook(bookID, memberID)
+	if err != nil {
+		fmt.Println("Error:", err)
+		return
+	}
+
+	fmt.Println("Book reserved successfully, You have 5 seconds to borrow it.")
+}
+
+func (c *CLIController) handleSimulateConcurrentReservations(reader *bufio.Scanner) {
+	fmt.Print("Enter book ID for simulation: ")
+	bookID := readInt(reader)
+
+	fmt.Println("Simulating 5 concurrent reservation attempts by members 1-5")
+	for i := 1; i <= 5; i++ {
+		memberID := i
+		go func(m int) {
+			err := c.lib.ReserveBook(bookID, m)
+			if err != nil {
+				fmt.Printf("Member %d: %v\n", m, err)
+			} else {
+				fmt.Printf("Member %d reserved book %d successfully\n", m, bookID)
+			}
+		}(memberID)
+	}
+	fmt.Println("Launched concurrent simulations. Check console for async outputs.")
+}
+
 
 func readInt(reader *bufio.Scanner) int {
 	for {

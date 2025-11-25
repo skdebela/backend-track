@@ -1,4 +1,3 @@
-// main.go
 package main
 
 import (
@@ -15,59 +14,68 @@ import (
 )
 
 func main() {
-	mongoURI := os.Getenv("MONGO_URI")
-    if mongoURI == "" {
-        mongoURI = "mongodb://localhost:27017"
-    }
-    dbName := os.Getenv("MONGO_DB")
-    if dbName == "" {
-        dbName = "task_manager_db"
-    }
-    collName := os.Getenv("MONGO_COLLECTION")
-    if collName == "" {
-        collName = "tasks"
-    }
+	mongoURI := getEnv("MONGO_URI", "mongodb://localhost:27017")
+	dbName := getEnv("MONGO_DB", "task_manager_db")
+	port := getEnv("PORT", "8080")
 
-    ctx := context.Background()
-    svc, err := data.NewTaskService(ctx, mongoURI, dbName)
-    if err != nil {
-        log.Fatalf("failed to connect to mongo: %v", err)
-    }
-    defer func() {
-        _ = svc.Disconnect(ctx)
-    }()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
 
-    r := router.SetupRouter(svc)
+	taskSvc, err := data.NewTaskService(ctx, mongoURI, dbName)
+	if err != nil {
+		log.Fatalf("Failed to initialize TaskService: %v", err)
+	}
+	defer func() {
+		if err := taskSvc.Disconnect(context.Background()); err != nil {
+			log.Printf("Error disconnecting TaskService: %v", err)
+		}
+	}()
 
-    srv := &http.Server{
-        Addr:    "8080",
-        Handler: r,
-        ReadTimeout:  10 * time.Second,
-        WriteTimeout: 10 * time.Second,
-        IdleTimeout:  60 * time.Second,
-    }
+	userSvc, err := data.NewUserService(ctx, mongoURI, dbName)
+	if err != nil {
+		log.Fatalf("Failed to initialize UserService: %v", err)
+	}
+	defer func() {
+		if err := userSvc.Disconnect(context.Background()); err != nil {
+			log.Printf("Error disconnecting UserService: %v", err)
+		}
+	}()
 
-    go func() {
-        log.Printf("server listening on :8080")
-        if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-            log.Fatalf("listen: %s\n", err)
-        }
-    }()
+	r := router.SetupRouter(taskSvc, userSvc)
 
-    // graceful shutdown
-    quit := make(chan os.Signal, 1)
-    signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
-    <-quit
-    log.Println("shutting down server...")
+	srv := &http.Server{
+		Addr:         ":" + port,
+		Handler:      r,
+		ReadTimeout:  15 * time.Second,
+		WriteTimeout: 15 * time.Second,
+		IdleTimeout:  60 * time.Second,
+	}
 
-    ctxShut, cancel := context.WithTimeout(ctx, 15*time.Second)
-    defer cancel()
-    if err := srv.Shutdown(ctxShut); err != nil {
-        log.Fatalf("server forced to shutdown: %v", err)
-    }
+	go func() {
+		log.Printf("Server starting on http://localhost:%s", port)
+		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+			log.Fatalf("Server failed: %v", err)
+		}
+	}()
 
-    if err := svc.Disconnect(ctxShut); err != nil {
-        log.Printf("error disconnecting mongo: %v", err)
-    }
-    log.Println("server exited properly")
+	quit := make(chan os.Signal, 1)
+	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
+	<-quit
+	log.Println("Shutting down server...")
+
+	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer shutdownCancel()
+
+	if err := srv.Shutdown(shutdownCtx); err != nil {
+		log.Fatalf("Server forced to shutdown: %v", err)
+	}
+
+	log.Println("Server stopped gracefully")
+}
+
+func getEnv(key, fallback string) string {
+	if value := os.Getenv(key); value != "" {
+		return value
+	}
+	return fallback
 }
